@@ -4,22 +4,22 @@
     },
     "metrics_values": {
         "val_metrics": {
-            "accuracy": 0.716,
-            "avg_loss": 0.795761552810669,
-            "samples_per_second": 4053.3125255842265,
-            "avg_time_per_batch": 0.015614670430917198,
-            "avg_time_per_sample": 0.00024671179280849175,
+            "accuracy": 0.725,
+            "avg_loss": 0.7885327239990234,
+            "samples_per_second": 3843.481627040995,
+            "avg_time_per_batch": 0.01646713719020238,
+            "avg_time_per_sample": 0.0002601807676051976,
             "n_params": 2236682,
-            "n_nonzero_params": 2236682
+            "n_nonzero_params": 694890
         },
         "test_metrics": {
-            "accuracy": 0.8505,
-            "avg_loss": 0.41702386035919187,
-            "samples_per_second": 7700.63674233652,
-            "avg_time_per_batch": 0.008271298809064133,
-            "avg_time_per_sample": 0.0001298593913023069,
+            "accuracy": 0.8485,
+            "avg_loss": 0.4390474920749664,
+            "samples_per_second": 5865.296359248143,
+            "avg_time_per_batch": 0.010859513929844864,
+            "avg_time_per_sample": 0.00017049436869856437,
             "n_params": 2236682,
-            "n_nonzero_params": 2236682
+            "n_nonzero_params": 694890
         }
     }
 }
