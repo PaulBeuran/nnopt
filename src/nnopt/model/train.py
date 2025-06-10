@@ -11,7 +11,7 @@ from nnopt.model.utils import _run_one_pass, _get_system_stats_msg
 
 
 # Setup logging
-logging.basicConfig(level=logging.DEBUG, 
+logging.basicConfig(level=logging.INFO, 
                     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
                     handlers=[logging.StreamHandler()])
 
@@ -73,6 +73,69 @@ def train_loop(
             f"Val Loss: {val_results['avg_loss']:.4f}, Val Acc: {val_results['accuracy']:.4f}, Val Throughput: {val_samples_per_second:.2f} samples/s | "
             f"{stats_msg}"
         )
+
+
+def train_model(
+    model: torch.nn.Module,
+    train_dataset: torch.utils.data.Dataset,
+    val_dataset: torch.utils.data.Dataset,
+    batch_size: int = 32,
+    shuffle: bool = True,
+    num_workers: int = 4,
+    pin_memory: bool = True,
+    epochs: int = 10,
+    optimizer_cls: type[Optimizer] = torch.optim.Adam,  # Changed to optimizer_cls
+    learning_rate: float = 0.001,
+    device: Literal["cpu", "cuda"] = "cuda" if torch.cuda.is_available() else "cpu",
+    use_amp: bool = True,
+    dtype: torch.dtype = torch.bfloat16
+) -> torch.nn.Module:
+    """
+    Train a model on a given dataset with specified parameters.
+    
+    Args:
+        model (torch.nn.Module): The model to train.
+        train_dataset (torch.utils.data.Dataset): Training dataset.
+        val_dataset (torch.utils.data.Dataset): Validation dataset.
+        batch_size (int): Batch size for training and validation.
+        shuffle (bool): Whether to shuffle the training data.
+        num_workers (int): Number of workers for DataLoader.
+        pin_memory (bool): Whether to pin memory in DataLoader.
+        epochs (int): Number of training epochs.
+        optimizer_cls (type[Optimizer]): Optimizer class to use for training.
+        learning_rate (float): Learning rate for the optimizer.
+        device (Literal["cpu", "cuda"]): Device to run the model on.
+        use_amp (bool): Whether to use automatic mixed precision.
+        dtype (torch.dtype): Data type for mixed precision.
+
+    Returns:
+        torch.nn.Module: The trained model.
+    """
+    
+    # DataLoaders
+    train_loader = torch.utils.data.DataLoader(train_dataset, 
+                                               batch_size=batch_size, 
+                                               shuffle=shuffle, 
+                                               num_workers=num_workers, 
+                                               pin_memory=pin_memory)
+    val_loader = torch.utils.data.DataLoader(val_dataset,
+                                             batch_size=batch_size, 
+                                             shuffle=False, 
+                                             num_workers=num_workers, 
+                                             pin_memory=pin_memory)
+    
+    criterion = torch.nn.CrossEntropyLoss()
+
+    # Move model to device
+    model.to(device)
+
+    # Optimizer
+    optimizer = optimizer_cls(model.parameters(), lr=learning_rate)
+
+    # Training loop
+    train_loop(model, train_loader, val_loader, epochs, criterion, optimizer, device, use_amp, dtype)
+
+    return model
 
 
 # Function to adapt a classification model to a new dataset as such:

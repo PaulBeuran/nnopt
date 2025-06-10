@@ -1,18 +1,25 @@
+from typing import Literal
+
 import torch
 import torch.nn.utils.prune as unstruct_prune
 import torch_pruning as struct_prune
 
+from nnopt.model.train import train_model
+from nnopt.model.eval import eval_model
+
+from nnopt.recipes.mobilenetv2_cifar10 import DEVICE, DTYPE
+
 import logging
 
 # Setup logging
-logging.basicConfig(level=logging.DEBUG, 
+logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                     handlers=[logging.StreamHandler()])
 
 logger = logging.getLogger(__name__)
 
 # Unstructured pruning
-def mark_weights_with_l1_unstructured_pruning(model: torch.nn.Module, 
+def l1_unstructured_pruning(model: torch.nn.Module, 
                                   pruning_amount: float, 
                                   layers_to_prune: tuple = (torch.nn.Linear, torch.nn.Conv2d),
                                   parameter_name: str = "weight") -> torch.nn.Module:
@@ -144,29 +151,6 @@ def calculate_sparsity(model: torch.nn.Module,
     return results
 
 
-def apply_l1_unstructured_pruning(model: torch.nn.Module, 
-                                  pruning_amount: float, 
-                                  layers_to_prune: tuple = (torch.nn.Linear, torch.nn.Conv2d),
-                                  parameter_name: str = "weight") -> torch.nn.Module:
-    """
-    Applies L1 unstructured pruning to the model and returns the pruned model.
-
-    Args:
-        model (torch.nn.Module): The model to prune.
-        pruning_amount (float): The fraction of connections to prune.
-        layers_to_prune (tuple): Layers to apply pruning to.
-        parameter_name (str): The name of the parameter to prune.
-
-    Returns:
-        torch.nn.Module: The pruned model.
-    """
-    model = mark_weights_with_l1_unstructured_pruning(model, pruning_amount, layers_to_prune, parameter_name)
-    model = remove_pruning_reparameterization(model, layers_to_prune, parameter_name)
-    logger.info("L1 unstructured pruning completed.")
-    _ = calculate_sparsity(model, layers_to_prune, parameter_name)
-    return model
-
-
 # Structured pruning
 def count_model_parameters(model: torch.nn.Module, only_trainable: bool = True) -> int:
     """Counts the total number of parameters in a model."""
@@ -174,7 +158,7 @@ def count_model_parameters(model: torch.nn.Module, only_trainable: bool = True) 
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
     return sum(p.numel() for p in model.parameters())
 
-def apply_l1_structured_pruning(
+def l1_structured_pruning(
     model: torch.nn.Module,
     example_inputs: torch.Tensor,
     pruning_amount: float,
@@ -325,3 +309,98 @@ def apply_l1_structured_pruning(
         model.train() # Set back to original mode
 
     return model
+
+
+# Pruning workflow
+def prune_finetune_and_eval(
+    model: torch.nn.Module,
+    train_dataset: torch.utils.data.Dataset,
+    val_dataset: torch.utils.data.Dataset,
+    test_dataset: torch.utils.data.Dataset,
+    pruning_method: Literal["l1_unstructured_pruning", "l1_structured_pruning"],
+    pruning_amount: float,
+    pruning_kwargs: dict = {},
+    batch_size: int = 64,
+    num_epochs: int = 10,
+    device: str = DEVICE,
+    use_amp: bool = True,
+    dtype: torch.dtype = DTYPE
+) -> tuple[torch.nn.Module, float]:
+    """
+    Applies unstructured pruning to the model, finetunes it on the training dataset,
+    and evaluates it on the test dataset.
+    Args:
+        model (torch.nn.Module): The model to prune and finetune.
+        train_dataset (torch.utils.data.Dataset): The training dataset.
+        val_dataset (torch.utils.data.Dataset): The validation dataset.
+        test_dataset (torch.utils.data.Dataset): The test dataset.
+        pruning_method (Callable): The pruning method to apply (e.g., l1_unstructured_pruning).
+        pruning_amount (float): The fraction of parameters to prune.
+        pruning_kwargs (dict): Additional keyword arguments for the pruning method.
+        batch_size (int): Batch size for training and evaluation.
+        num_epochs (int): Number of epochs for finetuning.
+        device (str): Device to run the model on ("cpu" or "cuda").
+        dtype (torch.dtype): Data type for the model.
+    """
+
+    pruning_method_map = {
+        "l1_unstructured_pruning": l1_unstructured_pruning,
+        "l1_structured_pruning": l1_structured_pruning
+    }
+
+    # Apply unstructured pruning
+    logger.info(f"Starting pruning with method: {pruning_method}, amount: {pruning_amount:.2f}")
+    pruned_model = pruning_method_map[pruning_method](
+        model=model,
+        pruning_amount=pruning_amount,
+        **pruning_kwargs
+    )
+
+    # Evaluate the model after pruning
+    logger.info("Evaluating the pruned model on the test dataset...")
+    test_accuracy = eval_model(
+        model=pruned_model,
+        test_dataset=test_dataset,
+        batch_size=batch_size,
+        device=device,
+        use_amp=use_amp,
+        dtype=dtype
+    )
+    logger.info(f"Test accuracy for pruned method {pruning_method} with pruning amount {pruning_amount:.2f}: {test_accuracy:.4f}")
+
+    # Finetune the pruned model
+    logger.info("Starting finetuning of the pruned model...")
+    pruned_finetuned_model = train_model(
+        model=pruned_model,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        batch_size=batch_size,
+        shuffle=True,  # Shuffle training data
+        num_workers=4,  # Adjust based on your system
+        pin_memory=True,  # Use pinned memory for faster data transfer to GPU
+        epochs=num_epochs,
+        device=device,
+        use_amp=use_amp,
+        dtype=dtype
+    )
+
+    # Evaluate the pruned and finetuned model on the test set
+    logger.info("Evaluating the pruned and finetuned model on the test dataset...")
+    test_accuracy = eval_model(
+        model=pruned_finetuned_model,
+        test_dataset=test_dataset,
+        batch_size=batch_size,
+        device=device,
+        use_amp=use_amp,
+        dtype=dtype
+    )
+
+    # Remove the pruning reparameterization
+    pruned_finetuned_model = remove_pruning_reparameterization(
+        pruned_finetuned_model,
+        layers_to_prune=(torch.nn.Linear, torch.nn.Conv2d),
+        parameter_name="weight"
+    )
+    logger.info("Removed pruning reparameterization from the pruned finetuned model.")
+    
+    return pruned_finetuned_model, test_accuracy

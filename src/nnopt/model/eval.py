@@ -10,7 +10,7 @@ from nnopt.model.utils import _run_one_pass, _get_system_stats_msg
 
 
 # Setup logging
-logging.basicConfig(level=logging.DEBUG, 
+logging.basicConfig(level=logging.INFO, 
                     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
                     handlers=[logging.StreamHandler()])
 

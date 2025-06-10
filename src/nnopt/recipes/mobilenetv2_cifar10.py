@@ -9,13 +9,14 @@ import logging
 
 # Setup device
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using device: {DEVICE}")
 DTYPE = torch.bfloat16 if DEVICE == "cuda" else torch.float32
 
 # Base directories for datasets and models
-BASE_DATA_DIR = "../data"
+_CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+_WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(_CURRENT_DIR)))
+BASE_DATA_DIR = os.path.join(_WORKSPACE_DIR, "data")
 IMAGE_DATA_DIR = os.path.join(BASE_DATA_DIR, "image")
-BASE_MODEL_DIR = "../models"
+BASE_MODEL_DIR = os.path.join(_WORKSPACE_DIR, "models")
 MODEL_BASELINE_DIR = os.path.join(BASE_MODEL_DIR, "baseline")
 
 # CIFAR-10 dataset directories
@@ -37,19 +38,39 @@ logging.basicConfig(level=logging.DEBUG,
                     handlers=[logging.StreamHandler()])
 
 logger = logging.getLogger(__name__)
+logger.debug(f"Using device: {DEVICE}, dtype: {DTYPE}")
 
 # MobileNetV2 model
 def get_mobilenetv2_cifar10_model(
     models_dir_path: str = BASE_MODEL_DIR,
     version: Literal["baseline"] = "baseline",
 ) -> torch.nn.Module:
-    model = torchvision.models.mobilenet_v2(weights=torchvision.models.MobileNet_V2_Weights.DEFAULT)
+    # Loads the MobileNetV2 model for CIFAR-10, adapting the final layer for 10 classes.
+    logger.info(f"Loading MobileNetV2 model for CIFAR-10 from version: {version} at {models_dir_path}")
+    model = torchvision.models.mobilenet_v2(weights=None)
+    num_classes_cifar10 = 10
+    if hasattr(model, 'classifier') and isinstance(model.classifier, torch.nn.Sequential):
+        if hasattr(model.classifier[-1], 'in_features'):
+            in_features = model.classifier[-1].in_features
+            model.classifier[-1] = torch.nn.Linear(in_features, num_classes_cifar10)
+        else:
+            # This case should ideally not be hit if MobileNetV2 structure is standard
+            logger.error("Could not find 'in_features' in the last layer of the classifier to adapt.")
+            raise AttributeError("Could not find 'in_features' in the last layer of the classifier.")
+    elif hasattr(model, 'fc'): # Fallback for models using 'fc'
+        in_features = model.fc.in_features
+        model.fc = torch.nn.Linear(in_features, num_classes_cifar10)
+    else:
+        logger.error("Model does not have a known 'classifier' (Sequential) or 'fc' (Linear) attribute to adapt.")
+        raise AttributeError("Model does not have a known classifier structure to adapt.")
+    
+    # Load the model state dictionary from the specified version
     version_dir_path = os.path.join(models_dir_path, version)
     version_path = os.path.join(version_dir_path, MOBILENETV2_CIFAR10_BASELINE_PT_FILENAME)
     if os.path.exists(models_dir_path) and os.path.exists(version_dir_path) and os.path.exists(version_path):
         model.load_state_dict(torch.load(version_path, map_location=DEVICE))
     else:
-        logger.info(f"Model weights not found at {version_path}, using default weights.")
+        raise FileNotFoundError(f"Model state dictionary not found at {version_path}. Please ensure the model is saved correctly or the path and version are correct.")
     return model
 
 def save_mobilenetv2_cifar10_model(
