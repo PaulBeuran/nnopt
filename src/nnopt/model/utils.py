@@ -10,15 +10,6 @@ from torch.amp import GradScaler, autocast
 import logging
 from tqdm import tqdm
 
-import psutil
-try:
-    import pynvml
-    pynvml.nvmlInit()
-    pynvml_available = True
-except (ImportError, pynvml.NVMLError):
-    pynvml_available = False
-print(f"pynvml available: {pynvml_available}")
-
 # Setup logging
 logging.basicConfig(level=logging.DEBUG, 
                     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -26,6 +17,14 @@ logging.basicConfig(level=logging.DEBUG,
 
 logger = logging.getLogger(__name__)
 
+import psutil
+try:
+    import pynvml
+    pynvml.nvmlInit()
+    pynvml_available = True
+except (ImportError, pynvml.NVMLError):
+    pynvml_available = False
+logger.debug(f"pynvml available: {pynvml_available}")
 
 def _get_system_stats_msg(device: str) -> str:
     """

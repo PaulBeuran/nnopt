@@ -28,7 +28,7 @@ CIFAR10_TEST_DIR = os.path.join(CIFAR10_DIR, "test")
 CIFAR10_TEST_PT_FILE = os.path.join(CIFAR10_TEST_DIR, "data.pt")
 
 # MobileNetV2 model directory
-MOBILENETV2_CIFAR10_BASELINE_PT_FILENAME = "mobilenetv2_cifar10_baseline.pt"
+MOBILENETV2_CIFAR10_BASELINE_PT_FILENAME = "mobilenetv2_cifar10.pt"
 MOBILENETV2_CIFAR10_BASELINE_PT_FILE = os.path.join(MODEL_BASELINE_DIR, MOBILENETV2_CIFAR10_BASELINE_PT_FILENAME)
 
 # Setup logging
@@ -51,6 +51,25 @@ def get_mobilenetv2_cifar10_model(
     else:
         logger.info(f"Model weights not found at {version_path}, using default weights.")
     return model
+
+def save_mobilenetv2_cifar10_model(
+    model: torch.nn.Module,
+    models_dir_path: str = BASE_MODEL_DIR,
+    version: Literal["baseline"] = "baseline",
+) -> None:
+    """
+    Saves the MobileNetV2 model for CIFAR-10 to the specified directory.
+    Args:
+        model (torch.nn.Module): The MobileNetV2 model to save.
+        models_dir_path (str): The base directory where the model will be saved.
+        version (str): The version of the model to save.
+    """
+    version_dir_path = os.path.join(models_dir_path, version)
+    if not os.path.exists(version_dir_path):
+        os.makedirs(version_dir_path)
+    version_path = os.path.join(version_dir_path, MOBILENETV2_CIFAR10_BASELINE_PT_FILENAME)
+    torch.save(model.state_dict(), version_path)
+    logger.info(f"Model saved to {version_path}")
 
 # CIFAR-10 dataset transforms for MobileNetV2
 def get_mobilenetv2_cifar10_transforms(
