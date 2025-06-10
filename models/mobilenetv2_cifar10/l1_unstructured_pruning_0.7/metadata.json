@@ -1,0 +1,25 @@
+{
+    "unstructured_sparse_config": {
+        "pruning_amount": 0.7
+    },
+    "metrics_values": {
+        "val_metrics": {
+            "accuracy": 0.716,
+            "avg_loss": 0.795761552810669,
+            "samples_per_second": 4053.3125255842265,
+            "avg_time_per_batch": 0.015614670430917198,
+            "avg_time_per_sample": 0.00024671179280849175,
+            "n_params": 2236682,
+            "n_nonzero_params": 2236682
+        },
+        "test_metrics": {
+            "accuracy": 0.8505,
+            "avg_loss": 0.41702386035919187,
+            "samples_per_second": 7700.63674233652,
+            "avg_time_per_batch": 0.008271298809064133,
+            "avg_time_per_sample": 0.0001298593913023069,
+            "n_params": 2236682,
+            "n_nonzero_params": 2236682
+        }
+    }
+}

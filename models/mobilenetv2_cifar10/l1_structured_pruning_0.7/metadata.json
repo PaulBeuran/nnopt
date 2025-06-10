@@ -1,0 +1,6 @@
+{
+    "metrics_values": {
+        "val_accuracy": 0.3098,
+        "test_accuracy": 0.3839
+    }
+}

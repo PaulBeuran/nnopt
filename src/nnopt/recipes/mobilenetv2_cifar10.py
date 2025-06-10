@@ -1,36 +1,23 @@
-from typing import Literal
+from typing import Any, Literal
 
 import os
+import json
 
 import torch
 import torchvision
 
+from nnopt.model.prune import l1_unstructured_pruning
+
 import logging
 
-# Setup device
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-DTYPE = torch.bfloat16 if DEVICE == "cuda" else torch.float32
+from nnopt.model.const import (
+    DEVICE, DTYPE, BASE_MODEL_DIR,
+    CIFAR10_TRAIN_DIR, CIFAR10_TRAIN_PT_FILE,
+    CIFAR10_VAL_DIR, CIFAR10_VAL_PT_FILE,
+    CIFAR10_TEST_DIR, CIFAR10_TEST_PT_FILE,
+    MOBILENETV2_CIFAR10_PT_FILENAME, METADATA_FILENAME
+)
 
-# Base directories for datasets and models
-_CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-_WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(_CURRENT_DIR)))
-BASE_DATA_DIR = os.path.join(_WORKSPACE_DIR, "data")
-IMAGE_DATA_DIR = os.path.join(BASE_DATA_DIR, "image")
-BASE_MODEL_DIR = os.path.join(_WORKSPACE_DIR, "models")
-MODEL_BASELINE_DIR = os.path.join(BASE_MODEL_DIR, "baseline")
-
-# CIFAR-10 dataset directories
-CIFAR10_DIR = os.path.join(IMAGE_DATA_DIR, "cifar10")
-CIFAR10_TRAIN_DIR = os.path.join(CIFAR10_DIR, "train")
-CIFAR10_TRAIN_PT_FILE = os.path.join(CIFAR10_TRAIN_DIR, "data.pt")
-CIFAR10_VAL_DIR = os.path.join(CIFAR10_DIR, "val")
-CIFAR10_VAL_PT_FILE = os.path.join(CIFAR10_VAL_DIR, "data.pt")
-CIFAR10_TEST_DIR = os.path.join(CIFAR10_DIR, "test")
-CIFAR10_TEST_PT_FILE = os.path.join(CIFAR10_TEST_DIR, "data.pt")
-
-# MobileNetV2 model directory
-MOBILENETV2_CIFAR10_BASELINE_PT_FILENAME = "mobilenetv2_cifar10.pt"
-MOBILENETV2_CIFAR10_BASELINE_PT_FILE = os.path.join(MODEL_BASELINE_DIR, MOBILENETV2_CIFAR10_BASELINE_PT_FILENAME)
 
 # Setup logging
 logging.basicConfig(level=logging.DEBUG, 
@@ -44,7 +31,15 @@ logger.debug(f"Using device: {DEVICE}, dtype: {DTYPE}")
 def get_mobilenetv2_cifar10_model(
     models_dir_path: str = BASE_MODEL_DIR,
     version: Literal["baseline"] = "baseline",
-) -> torch.nn.Module:
+) -> tuple[torch.nn.Module, dict[str, Any] | None]:
+    """
+    Loads the MobileNetV2 model for CIFAR-10 from the specified directory and version.
+    Args:
+        models_dir_path (str): The base directory where the model is saved.
+        version (str): The version of the model to load.
+    Returns:
+        torch.nn.Module: The MobileNetV2 model adapted for CIFAR-10.
+    """
     # Loads the MobileNetV2 model for CIFAR-10, adapting the final layer for 10 classes.
     logger.info(f"Loading MobileNetV2 model for CIFAR-10 from version: {version} at {models_dir_path}")
     model = torchvision.models.mobilenet_v2(weights=None)
@@ -66,17 +61,36 @@ def get_mobilenetv2_cifar10_model(
     
     # Load the model state dictionary from the specified version
     version_dir_path = os.path.join(models_dir_path, version)
-    version_path = os.path.join(version_dir_path, MOBILENETV2_CIFAR10_BASELINE_PT_FILENAME)
+    version_path = os.path.join(version_dir_path, MOBILENETV2_CIFAR10_PT_FILENAME)
     if os.path.exists(models_dir_path) and os.path.exists(version_dir_path) and os.path.exists(version_path):
         model.load_state_dict(torch.load(version_path, map_location=DEVICE))
     else:
         raise FileNotFoundError(f"Model state dictionary not found at {version_path}. Please ensure the model is saved correctly or the path and version are correct.")
-    return model
+    
+    # Load metadata if it exists
+    metadata: dict[str, Any] | None = None
+    metadata_path = os.path.join(version_dir_path, METADATA_FILENAME)
+    if os.path.exists(metadata_path):
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+            logger.info(f"Loaded metadata: {metadata}")
+            # If unstructured sparse config is present, apply it to reparametrize the model for further finetuning without touching to the pruned weights. This works because as pruned weights are already set to 0, pruning again with the same config will only prune the already pruned model weights.
+            if "unstructured_sparse_config" in metadata:
+                unstruct_sparse_config = metadata["unstructured_sparse_config"]
+                if unstruct_sparse_config:
+                    logger.info(f"Applying unstructured sparse config: {unstruct_sparse_config}")
+                    model = l1_unstructured_pruning(model, **unstruct_sparse_config)
+    else:
+        logger.warning(f"No metadata found at {metadata_path}. Continuing without applying unstructured sparse config.")
+    return model, metadata
+
 
 def save_mobilenetv2_cifar10_model(
     model: torch.nn.Module,
+    version: str,
+    unstruct_sparse_config: dict[str, Any] = None,
+    metrics_values: dict[str, Any] | None = None,
     models_dir_path: str = BASE_MODEL_DIR,
-    version: Literal["baseline"] = "baseline",
 ) -> None:
     """
     Saves the MobileNetV2 model for CIFAR-10 to the specified directory.
@@ -85,12 +99,29 @@ def save_mobilenetv2_cifar10_model(
         models_dir_path (str): The base directory where the model will be saved.
         version (str): The version of the model to save.
     """
+    # Calculate the paths
     version_dir_path = os.path.join(models_dir_path, version)
     if not os.path.exists(version_dir_path):
         os.makedirs(version_dir_path)
-    version_path = os.path.join(version_dir_path, MOBILENETV2_CIFAR10_BASELINE_PT_FILENAME)
-    torch.save(model.state_dict(), version_path)
-    logger.info(f"Model saved to {version_path}")
+    model_path = os.path.join(version_dir_path, MOBILENETV2_CIFAR10_PT_FILENAME)
+    metadata_path = os.path.join(version_dir_path, METADATA_FILENAME)
+    # Save the model state dictionary
+    torch.save(model.state_dict(), model_path)
+    # Save metadata if provided
+    metadata: dict[str, Any] = {}
+    if unstruct_sparse_config is not None:
+        metadata["unstructured_sparse_config"] = unstruct_sparse_config
+    if metrics_values is not None:
+        metadata["metrics_values"] = metrics_values
+    if metadata:
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=4)
+            logger.info(f"Metadata saved to {metadata_path}")
+    else:
+        logger.info("No metadata to save.")
+    # Save the model
+    logger.info(f"Model saved to {model_path}")
+
 
 # CIFAR-10 dataset transforms for MobileNetV2
 def get_mobilenetv2_cifar10_transforms(
@@ -98,6 +129,10 @@ def get_mobilenetv2_cifar10_transforms(
 ):
     """
     Returns the transforms for training and validation datasets for MobileNetV2 on CIFAR-10.
+    Args:
+        color_jitter (bool): Whether to apply color jitter augmentation.
+    Returns:
+        tuple: A tuple containing the training and validation transforms.
     """
     train_transform = torchvision.transforms.Compose([
         torchvision.transforms.RandomResizedCrop(224),
@@ -116,12 +151,17 @@ def get_mobilenetv2_cifar10_transforms(
     
     return train_transform, val_transform
 
+
 # CIFAR-10 datasets
 def get_cifar10_datasets(
     color_jitter: bool = True
 ):
     """
     Returns the CIFAR-10 datasets with transforms for MobileNetV2.
+    Args:
+        color_jitter (bool): Whether to apply color jitter augmentation.
+    Returns:
+        tuple: A tuple containing the training, validation, and test datasets.
     """
     image_train_cifar10_mobilenetV2_transform, image_val_cifar10_mobilenetV2_transform = get_mobilenetv2_cifar10_transforms(color_jitter=color_jitter)
 

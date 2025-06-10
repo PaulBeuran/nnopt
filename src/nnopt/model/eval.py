@@ -29,10 +29,30 @@ def eval_model(
     num_warmup_batches: int = 5,
     num_workers: int = 4, 
     pin_memory: bool = True 
-) -> float:
+) -> dict[str, float]:
+    """
+    Evaluate a model on a test dataset and return the mean accuracy.
+    Args:
+        model (torch.nn.Module): The model to evaluate.
+        test_dataset (torch.utils.data.Dataset): The dataset to evaluate the model on.
+        batch_size (int): Batch size for evaluation.
+        criterion (Callable): Loss function to use for evaluation.
+        device (str): Device to run the evaluation on ("cpu" or "cuda").
+        use_amp (bool): Whether to use automatic mixed precision.
+        dtype (torch.dtype): Data type for mixed precision.
+        num_warmup_batches (int): Number of batches to use for warmup phase.
+        num_workers (int): Number of workers for DataLoader.
+        pin_memory (bool): Whether to pin memory in DataLoader.
+    Returns:
+        float: Mean accuracy of the model on the test dataset.
+    """
+    logger.info(f"Starting evaluation on device: {device}, dtype: {dtype}, batch size: {batch_size}")
+    # Ensure model is in evaluation mode
     model.to(device)
+    # Set model to evaluation mode
     model.eval() 
     
+    # Create DataLoader for the test dataset
     test_loader = torch.utils.data.DataLoader(
         test_dataset, 
         batch_size=batch_size, 
@@ -67,6 +87,7 @@ def eval_model(
         enable_timing=True # Crucial: ensure timing is enabled
     )
 
+    # Extract evaluation metrics
     avg_eval_loss = eval_results["avg_loss"]
     eval_accuracy = eval_results["accuracy"]
     
@@ -75,14 +96,22 @@ def eval_model(
     avg_time_per_batch = eval_results.get("avg_time_per_batch", 0)
     avg_time_per_sample = eval_results.get("avg_time_per_sample", 0)
 
+    # Log throughput and system stats
     throughput_msg = (f"Throughput: {samples_per_second:.2f} samples/sec | "
                       f"Avg Batch Time: {avg_time_per_batch*1000:.2f} ms | "
                       f"Avg Sample Time: {avg_time_per_sample*1000:.2f} ms")
-    
     stats_msg = _get_system_stats_msg(device)
     
     tqdm.write(f"Evaluation Complete: Avg Loss: {avg_eval_loss:.4f}, Accuracy: {eval_accuracy:.4f}")
     tqdm.write(throughput_msg)
     tqdm.write(f"System Stats: {stats_msg}")
     
-    return eval_accuracy
+    return {
+        "accuracy": eval_accuracy,
+        "avg_loss": avg_eval_loss,
+        "samples_per_second": samples_per_second,
+        "avg_time_per_batch": avg_time_per_batch,
+        "avg_time_per_sample": avg_time_per_sample,
+        "n_params": sum(p.numel() for p in model.parameters() if p.requires_grad),
+        "n_nonzero_params": sum(p.nonzero().shape[0] for p in model.parameters() if p.requires_grad),
+    }

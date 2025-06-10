@@ -7,7 +7,7 @@ import torch_pruning as struct_prune
 from nnopt.model.train import train_model
 from nnopt.model.eval import eval_model
 
-from nnopt.recipes.mobilenetv2_cifar10 import DEVICE, DTYPE
+from nnopt.model.const import DEVICE, DTYPE
 
 import logging
 
@@ -160,11 +160,12 @@ def count_model_parameters(model: torch.nn.Module, only_trainable: bool = True) 
 
 def l1_structured_pruning(
     model: torch.nn.Module,
-    example_inputs: torch.Tensor,
     pruning_amount: float,
+    example_inputs: torch.Tensor,
     layers_to_prune: tuple[type, ...] = (torch.nn.Conv2d, torch.nn.Linear),
     ignored_layers: list[torch.nn.Module] | None = None,
-    prune_output_channels: bool = True
+    classifier_module_name: str = "classifier",
+    prune_output_channels: bool = True,
 ) -> torch.nn.Module:
     """
     Applies L1 magnitude structured pruning to specified layers of a model
@@ -178,7 +179,8 @@ def l1_structured_pruning(
         example_inputs (torch.Tensor): A batch of example inputs for dependency tracing.
                                        Should be on the same device as the model.
         pruning_amount (float): The fraction of channels/features to prune from each
-                                targeted layer (e.g., 0.2 for 20%).
+                                targeted layer (e.g., 0.2 for 20%). WARNING: This is a fraction of the total channels/features in each layer,
+                                not the total model parameters. This creates a cascading effect where the current layer's pruning also prunes the next layer's input channels/features.
         layers_to_prune (tuple[type, ...]): Tuple of layer types to prune.
         ignored_layers (list[torch.nn.Module] | None): A list of specific layer
                                                     modules to ignore during pruning.
@@ -214,10 +216,13 @@ def l1_structured_pruning(
 
     for name, module in model.named_modules():
         if isinstance(module, layers_to_prune):
-            if ignored_layers and module in ignored_layers:
+            if (ignored_layers and module in ignored_layers):
                 logger.debug(f"Skipping ignored layer: {name} ({type(module).__name__})")
                 continue
-
+            if classifier_module_name and classifier_module_name in name:
+                logger.debug(f"Skipping classifier layer: {name} ({type(module).__name__})")
+                continue
+            
             current_channels = 0
             pruning_fn = None
             dim_type = ""
@@ -232,7 +237,7 @@ def l1_structured_pruning(
                     channel_importance = torch.norm(weights.flatten(1), p=1, dim=1)
                 elif isinstance(module, torch.nn.Linear):
                     current_channels = module.out_features
-                    pruning_fn = struct_prune.prune_linear_out_features
+                    pruning_fn = struct_prune.prune_linear_out_channels
                     dim_type = "output features"
                     # L1 norm for each output feature's weights: (F_out, F_in) -> sum over F_in
                     channel_importance = torch.norm(weights, p=1, dim=1)
@@ -247,7 +252,7 @@ def l1_structured_pruning(
                     channel_importance = torch.norm(weights.transpose(0,1).contiguous().flatten(1), p=1, dim=1)
                 elif isinstance(module, torch.nn.Linear):
                     current_channels = module.in_features
-                    pruning_fn = struct_prune.prune_linear_in_features
+                    pruning_fn = struct_prune.prune_linear_in_channels
                     dim_type = "input features"
                     # Simplified L1 for input features: (F_out, F_in) -> transpose to (F_in, F_out)
                     channel_importance = torch.norm(weights.T.contiguous(), p=1, dim=1)
@@ -281,15 +286,16 @@ def l1_structured_pruning(
             pruning_indices = sorted_channel_indices[:num_to_prune].tolist()
 
             try:
-                pruning_plan = DG.get_pruning_plan(module, pruning_fn, idxs=pruning_indices)
+                pruning_plan = DG.get_pruning_group(module, pruning_fn, idxs=pruning_indices)
                 if pruning_plan:
                     logger.debug(f"Pruning {num_to_prune} {dim_type} from layer {name} ({type(module).__name__}). Smallest L1 norm indices (first 10): {pruning_indices[:10]}...")
-                    pruning_plan.exec()
+                    pruning_plan.prune()
                     num_pruned_overall_layers += 1
                 else:
                     logger.warning(f"Could not generate pruning plan for layer {name} ({type(module).__name__}).")
             except Exception as e:
                 logger.error(f"Failed to prune layer {name} ({type(module).__name__}): {e}", exc_info=True)
+                raise e
 
     if num_pruned_overall_layers == 0:
         logger.warning("No layers were structurally pruned. Check 'layers_to_prune', model structure, and pruning_amount.")
@@ -312,11 +318,10 @@ def l1_structured_pruning(
 
 
 # Pruning workflow
-def prune_finetune_and_eval(
+def prune_finetune(
     model: torch.nn.Module,
     train_dataset: torch.utils.data.Dataset,
     val_dataset: torch.utils.data.Dataset,
-    test_dataset: torch.utils.data.Dataset,
     pruning_method: Literal["l1_unstructured_pruning", "l1_structured_pruning"],
     pruning_amount: float,
     pruning_kwargs: dict = {},
@@ -325,7 +330,7 @@ def prune_finetune_and_eval(
     device: str = DEVICE,
     use_amp: bool = True,
     dtype: torch.dtype = DTYPE
-) -> tuple[torch.nn.Module, float]:
+) -> torch.nn.Module:
     """
     Applies unstructured pruning to the model, finetunes it on the training dataset,
     and evaluates it on the test dataset.
@@ -357,16 +362,16 @@ def prune_finetune_and_eval(
     )
 
     # Evaluate the model after pruning
-    logger.info("Evaluating the pruned model on the test dataset...")
-    test_accuracy = eval_model(
+    logger.info("Evaluating the pruned model on the validation dataset...")
+    val_metrics = eval_model(
         model=pruned_model,
-        test_dataset=test_dataset,
+        test_dataset=val_dataset,
         batch_size=batch_size,
         device=device,
         use_amp=use_amp,
         dtype=dtype
     )
-    logger.info(f"Test accuracy for pruned method {pruning_method} with pruning amount {pruning_amount:.2f}: {test_accuracy:.4f}")
+    logger.info(f"Validation accuracy for pruned method {pruning_method} with pruning amount {pruning_amount:.2f}: {val_metrics['accuracy']:.4f}")
 
     # Finetune the pruned model
     logger.info("Starting finetuning of the pruned model...")
@@ -384,16 +389,17 @@ def prune_finetune_and_eval(
         dtype=dtype
     )
 
-    # Evaluate the pruned and finetuned model on the test set
-    logger.info("Evaluating the pruned and finetuned model on the test dataset...")
-    test_accuracy = eval_model(
+    # Evaluate the pruned and finetuned model on the validation set
+    logger.info("Evaluating the pruned and finetuned model on the validation dataset...")
+    val_metrics = eval_model(
         model=pruned_finetuned_model,
-        test_dataset=test_dataset,
+        test_dataset=val_dataset,
         batch_size=batch_size,
         device=device,
         use_amp=use_amp,
         dtype=dtype
     )
+    logger.info(f"Validation accuracy for pruned and finetuned model: {val_metrics['accuracy']:.4f}")
 
     # Remove the pruning reparameterization
     pruned_finetuned_model = remove_pruning_reparameterization(
@@ -403,4 +409,4 @@ def prune_finetune_and_eval(
     )
     logger.info("Removed pruning reparameterization from the pruned finetuned model.")
     
-    return pruned_finetuned_model, test_accuracy
+    return pruned_finetuned_model

@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO,
 
 logger = logging.getLogger(__name__)
 
-# Training loop function
+
 def train_loop(
     model: torch.nn.Module,
     train_loader: torch.utils.data.DataLoader,
@@ -28,11 +28,27 @@ def train_loop(
     device: Literal["cpu", "cuda"] = "cuda" if torch.cuda.is_available() else "cpu",
     use_amp: bool = True, 
     dtype: torch.dtype = torch.bfloat16 
-):
+) -> torch.nn.Module:
+    """
+    Train the model for a specified number of epochs, evaluating on a validation set after each epoch.
+    Args:
+        model (torch.nn.Module): The model to train.
+        train_loader (torch.utils.data.DataLoader): DataLoader for training data.
+        val_loader (torch.utils.data.DataLoader): DataLoader for validation data.
+        epochs (int): Number of epochs to train the model.
+        criterion (Callable[[torch.Tensor, torch.Tensor], torch.Tensor]): Loss function.
+        optimizer (Optimizer): Optimizer for training.
+        device (Literal["cpu", "cuda"]): Device to run the model on.
+        use_amp (bool): Whether to use automatic mixed precision.
+        dtype (torch.dtype): Data type for mixed precision.
+    """
+    # Move model to device
     model.to(device)
     
+    # Initialize GradScaler for mixed precision training
     scaler = GradScaler(enabled=(use_amp and device == "cuda")) 
 
+    # Training loop
     for epoch in range(epochs):
         # Train step
         train_results = _run_one_pass(
@@ -62,6 +78,7 @@ def train_loop(
             enable_timing=True
         )
         
+        # Log results
         stats_msg = _get_system_stats_msg(device)
         train_samples_per_second = train_results.get("samples_per_second", 0.0)
         train_accuracy = train_results.get("accuracy", 0.0)
@@ -73,6 +90,8 @@ def train_loop(
             f"Val Loss: {val_results['avg_loss']:.4f}, Val Acc: {val_results['accuracy']:.4f}, Val Throughput: {val_samples_per_second:.2f} samples/s | "
             f"{stats_msg}"
         )
+
+    return model
 
 
 def train_model(
@@ -124,6 +143,7 @@ def train_model(
                                              num_workers=num_workers, 
                                              pin_memory=pin_memory)
     
+    # Loss function
     criterion = torch.nn.CrossEntropyLoss()
 
     # Move model to device
@@ -138,12 +158,6 @@ def train_model(
     return model
 
 
-# Function to adapt a classification model to a new dataset as such:
-# * Load the pretrained model from torchvision or torchaudio
-# * Replace the final layer to match the number of classes in the new dataset
-# * Train the head of the model with the backbone freezed on the new dataset
-# * After training the head, unfreeze the backbone and fine-tune the entire model
-# * Augment the dataset with random transformations
 def adapt_model_head_to_dataset(
     model: torch.nn.Module, 
     num_classes: int, 
@@ -155,13 +169,33 @@ def adapt_model_head_to_dataset(
     pin_memory: bool = True,
     head_train_epochs: int = 10,
     fine_tune_epochs: int = 5,
-    optimizer_cls: type[Optimizer] = torch.optim.Adam, # Changed to optimizer_cls
+    optimizer_cls: type[Optimizer] = torch.optim.Adam,
     head_train_lr: float = 0.001,
     fine_tune_lr: float = 0.0001,
     device: Literal["cpu", "cuda"] = "cuda" if torch.cuda.is_available() else "cpu",
     use_amp: bool = True,
     dtype: torch.dtype = torch.bfloat16
 ) -> torch.nn.Module:
+    """
+    Adapt a pretrained classification model to a new dataset by replacing the final layer, training the head with the backbone frozen (this results in logistic regression training with the backbone acting as a feature extractor, to avoid catastrophic forgetting), and then fine-tuning the entire model on the new dataset (to adapt the backbone and the head jointly on the new dataset).
+    Args:
+        model (torch.nn.Module): The pretrained model to adapt.
+        num_classes (int): Number of classes in the new dataset.
+        train_dataset (torch.utils.data.Dataset): Training dataset.
+        val_dataset (torch.utils.data.Dataset): Validation dataset.
+        batch_size (int): Batch size for training and validation.
+        shuffle (bool): Whether to shuffle the training data.
+        num_workers (int): Number of workers for DataLoader.
+        pin_memory (bool): Whether to pin memory in DataLoader.
+        head_train_epochs (int): Number of epochs to train the head.
+        fine_tune_epochs (int): Number of epochs to fine-tune the entire model.
+        optimizer_cls (type[Optimizer]): Optimizer class to use for training.
+        head_train_lr (float): Learning rate for training the head.
+        fine_tune_lr (float): Learning rate for fine-tuning the entire model.
+        device (Literal["cpu", "cuda"]): Device to run the model on.
+        use_amp (bool): Whether to use automatic mixed precision.
+        dtype (torch.dtype): Data type for mixed precision.
+    """
 
     # Replace the final layer
     if hasattr(model, "fc"):
