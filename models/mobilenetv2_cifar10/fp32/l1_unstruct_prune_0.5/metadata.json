@@ -1,0 +1,39 @@
+{
+    "unstructured_sparse_config": {
+        "pruning_amount": 0.5
+    },
+    "metrics_values": {
+        "val_metrics": {
+            "accuracy": 0.888,
+            "avg_loss": 0.3219439139842987,
+            "samples_per_second": 5882.971344864352,
+            "avg_time_per_batch": 0.010758362658991613,
+            "avg_time_per_sample": 0.0001699821300120675,
+            "params_stats": {
+                "int_weight_params": 0,
+                "float_weight_params": 2202560,
+                "float_bias_params": 10,
+                "bn_param_params": 34112,
+                "other_float_params": 0,
+                "total_params": 2236682,
+                "approx_memory_mb_for_params": 8.532264709472656
+            }
+        },
+        "test_metrics": {
+            "accuracy": 0.889,
+            "avg_loss": 0.3292289047002792,
+            "samples_per_second": 6347.80674027977,
+            "avg_time_per_batch": 0.010034059025734666,
+            "avg_time_per_sample": 0.00015753472670403427,
+            "params_stats": {
+                "int_weight_params": 0,
+                "float_weight_params": 2202560,
+                "float_bias_params": 10,
+                "bn_param_params": 34112,
+                "other_float_params": 0,
+                "total_params": 2236682,
+                "approx_memory_mb_for_params": 8.532264709472656
+            }
+        }
+    }
+}

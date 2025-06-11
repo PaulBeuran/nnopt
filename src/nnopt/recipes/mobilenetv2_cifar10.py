@@ -30,8 +30,9 @@ logger.info(f"Using device: {DEVICE}, dtype: {DTYPE}")
 # MobileNetV2 model
 def get_mobilenetv2_model(
     weights: torchvision.models.MobileNet_V2_Weights | None = torchvision.models.MobileNet_V2_Weights.IMAGENET1K_V1,
-    quantized: bool = False
-    ) -> torch.nn.Module:
+    quantized: bool = False,
+    quant_weights: bool = False
+) -> torch.nn.Module:
     """
     Returns the base MobileNetV2 model from torchvision.
     Args:
@@ -41,51 +42,37 @@ def get_mobilenetv2_model(
     """
     logger.info(f"Loading base MobileNetV2 model, quantized: {quantized}")
     if not quantized:
-        return torchvision.models.mobilenet_v2(weights=torchvision.models.MobileNet_V2_Weights.IMAGENET1K_V1)
+        return torchvision.models.mobilenet_v2(weights=weights)
     else:
         # Load the quantized MobileNetV2
-        return torchvision.models.quantization.mobilenet_v2(weights=torchvision.models.MobileNet_V2_Weights.IMAGENET1K_V1, quantize=False)
+        return torchvision.models.quantization.mobilenet_v2(weights=weights, quantize=quant_weights)
 
 def get_mobilenetv2_cifar10_model(
     models_dir_path: str = BASE_MODEL_DIR,
     version: Literal["baseline"] = "baseline",
-    quantized: bool = False
+    device: Literal["cpu", "cuda"] = DEVICE
 ) -> tuple[torch.nn.Module, dict[str, Any] | None]:
     """
     Loads the MobileNetV2 model for CIFAR-10 from the specified directory and version.
+    The model is loaded entirely, including its architecture and weights.
     Args:
         models_dir_path (str): The base directory where the model is saved.
         version (str): The version of the model to load.
+        device (str): The device to load the model onto.
     Returns:
-        torch.nn.Module: The MobileNetV2 model adapted for CIFAR-10.
+        torch.nn.Module: The MobileNetV2 model.
     """
-    # Loads the MobileNetV2 model for CIFAR-10, adapting the final layer for 10 classes.
-    logger.info(f"Loading MobileNetV2 model for CIFAR-10 from version: {version} at {models_dir_path}")
-    model = get_mobilenetv2_model(weights=None, quantized=quantized)
-    num_classes_cifar10 = 10
-    if hasattr(model, 'classifier') and isinstance(model.classifier, torch.nn.Sequential):
-        if hasattr(model.classifier[-1], 'in_features'):
-            in_features = model.classifier[-1].in_features
-            model.classifier[-1] = torch.nn.Linear(in_features, num_classes_cifar10)
-        else:
-            # This case should ideally not be hit if MobileNetV2 structure is standard
-            logger.error("Could not find 'in_features' in the last layer of the classifier to adapt.")
-            raise AttributeError("Could not find 'in_features' in the last layer of the classifier.")
-    elif hasattr(model, 'fc'): # Fallback for models using 'fc'
-        in_features = model.fc.in_features
-        model.fc = torch.nn.Linear(in_features, num_classes_cifar10)
-    else:
-        logger.error("Model does not have a known 'classifier' (Sequential) or 'fc' (Linear) attribute to adapt.")
-        raise AttributeError("Model does not have a known classifier structure to adapt.")
+    logger.info(f"Loading MobileNetV2 model for CIFAR-10 (architecture and weights) from version: {version} at {models_dir_path}")
     
-    # Load the model state dictionary from the specified version
     version_dir_path = os.path.join(models_dir_path, version)
     version_path = os.path.join(version_dir_path, MOBILENETV2_CIFAR10_PT_FILENAME)
-    if os.path.exists(models_dir_path) and os.path.exists(version_dir_path) and os.path.exists(version_path):
-        model.load_state_dict(torch.load(version_path, map_location=DEVICE))
-    else:
-        raise FileNotFoundError(f"Model state dictionary not found at {version_path}. Please ensure the model is saved correctly or the path and version are correct.")
     
+    if not (os.path.exists(models_dir_path) and os.path.exists(version_dir_path) and os.path.exists(version_path)):
+        raise FileNotFoundError(f"Model file not found at {version_path}. Please ensure the model is saved correctly or the path and version are correct.")
+        
+    model = torch.load(version_path, weights_only=False, map_location=device)
+    logger.info(f"Successfully loaded model from {version_path}")
+
     # Load metadata if it exists
     metadata: dict[str, Any] | None = None
     metadata_path = os.path.join(version_dir_path, METADATA_FILENAME)
@@ -125,7 +112,7 @@ def save_mobilenetv2_cifar10_model(
     model_path = os.path.join(version_dir_path, MOBILENETV2_CIFAR10_PT_FILENAME)
     metadata_path = os.path.join(version_dir_path, METADATA_FILENAME)
     # Save the model state dictionary
-    torch.save(model.state_dict(), model_path)
+    torch.save(model, model_path)
     # Save metadata if provided
     metadata: dict[str, Any] = {}
     if unstruct_sparse_config is not None:
@@ -140,6 +127,121 @@ def save_mobilenetv2_cifar10_model(
         logger.info("No metadata to save.")
     # Save the model
     logger.info(f"Model saved to {model_path}")
+
+
+def save_quantized_mobilenetv2_cifar10_model(
+    model: torch.nn.Module,
+    version: str,
+    unstruct_sparse_config: dict[str, Any] = None,
+    metrics_values: dict[str, Any] | None = None,
+    models_dir_path: str = BASE_MODEL_DIR,
+) -> None:
+    """
+    Saves the quantized MobileNetV2 model for CIFAR-10 to the specified directory.
+    Args:
+        model (torch.nn.Module): The quantized MobileNetV2 model to save.
+        models_dir_path (str): The base directory where the model will be saved.
+        version (str): The version of the model to save.
+    """
+    # Calculate the paths
+    version_dir_path = os.path.join(models_dir_path, version)
+    if not os.path.exists(version_dir_path):
+        os.makedirs(version_dir_path)
+    model_path = os.path.join(version_dir_path, MOBILENETV2_CIFAR10_PT_FILENAME)
+    metadata_path = os.path.join(version_dir_path, METADATA_FILENAME)
+    
+    # Save the model state dictionary
+    print("!!!!!!!!!!!!!!!!!!")
+    print(model_path)
+    print(type(model.state_dict()))
+    print("!!!!!!!!!!!!!!!!!!")
+    torch.save(model.state_dict(), model_path)
+    print("!!!!!!!!!!!!!!!!!!")
+    x = torch.load(model_path, weights_only=False)
+    print(type(x))
+    print("!!!!!!!!!!!!!!!!!!")
+
+    # Save metadata if provided
+    metadata: dict[str, Any] = {}
+    if unstruct_sparse_config is not None:
+        metadata["unstructured_sparse_config"] = unstruct_sparse_config
+    if metrics_values is not None:
+        metadata["metrics_values"] = metrics_values
+    if metadata:
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=4)
+            logger.info(f"Metadata saved to {metadata_path}")
+    else:
+        logger.info("No metadata to save.")
+    
+    # Save the model
+    logger.info(f"Quantized model saved to {model_path}")
+
+
+def get_quantized_mobilenetv2_cifar10_model(
+    models_dir_path: str = BASE_MODEL_DIR,
+    version: Literal["baseline"] = "baseline",
+    device: Literal["cpu", "cuda"] = DEVICE
+) -> torch.nn.Module:
+    """
+    Loads the quantized MobileNetV2 model for CIFAR-10 from the specified directory and version.
+    The model is loaded entirely, including its architecture and weights.
+    Args:
+        models_dir_path (str): The base directory where the model is saved.
+        version (str): The version of the model to load.
+        device (str): The device to load the model onto.
+    Returns:
+        torch.nn.Module: The quantized MobileNetV2 model.
+    """
+    logger.info(f"Loading quantized MobileNetV2 model for CIFAR-10 from version: {version} at {models_dir_path}")
+
+    # Loads the MobileNetV2 model for CIFAR-10, adapting the final layer for 10 classes.
+    logger.info(f"Loading MobileNetV2 model for CIFAR-10 from version: {version} at {models_dir_path}")
+    quant_model = get_mobilenetv2_model(weights=None, quantized=True, quant_weights=True)
+    num_classes_cifar10 = 10
+    if hasattr(quant_model, 'classifier') and isinstance(quant_model.classifier, torch.nn.Sequential):
+        if hasattr(quant_model.classifier[-1], 'in_features'):
+            in_features = quant_model.classifier[-1].in_features
+            quant_model.classifier[-1] = torch.nn.Linear(in_features, num_classes_cifar10)
+        else:
+            # This case should ideally not be hit if MobileNetV2 structure is standard
+            logger.error("Could not find 'in_features' in the last layer of the classifier to adapt.")
+            raise AttributeError("Could not find 'in_features' in the last layer of the classifier.")
+    elif hasattr(quant_model, 'fc'): # Fallback for models using 'fc'
+        in_features = quant_model.fc.in_features
+        quant_model.fc = torch.nn.Linear(in_features, num_classes_cifar10)
+    else:
+        logger.error("Model does not have a known 'classifier' (Sequential) or 'fc' (Linear) attribute to adapt.")
+        raise AttributeError("Model does not have a known classifier structure to adapt.")
+    
+    # Load the model state dictionary from the specified version
+    version_dir_path = os.path.join(models_dir_path, version)
+    version_path = os.path.join(version_dir_path, MOBILENETV2_CIFAR10_PT_FILENAME)
+    
+    if not (os.path.exists(models_dir_path) and os.path.exists(version_dir_path) and os.path.exists(version_path)):
+        raise FileNotFoundError(f"Quantized model file not found at {version_path}. Please ensure the model is saved correctly or the path and version are correct.")
+    print("!!!!!!!!!!!!!!!!!!")
+    print(version_path)
+    print("!!!!!!!!!!!!!!!!!!")
+    quant_model.load_state_dict(torch.load(version_path, weights_only=False))
+    
+    logger.info(f"Successfully loaded quantized model from {version_path}")
+    
+    return quant_model.to(device)
+
+
+def convert_mobilenetv2_cifar10_to_quantized(
+    model: torch.nn.Module,
+) -> torch.nn.Module:
+    quant_model = torchvision.models.quantization.mobilenet_v2(
+        weights=None,
+        quantize=False
+    )
+    # Change the head of the quantized model to match CIFAR-10 classes
+    quant_model.classifier[1] = torch.nn.Linear(1280, 10)  # CIFAR-10 has 10 classes
+    quant_model.load_state_dict(model.state_dict())
+    quant_model.cpu()
+    return quant_model
 
 
 # CIFAR-10 dataset transforms for MobileNetV2
