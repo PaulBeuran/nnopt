@@ -1,0 +1,18 @@
+{
+    "metrics_values": {
+        "accuracy": 0.1268,
+        "avg_loss": 8.721706450653077,
+        "samples_per_second": 1164.3459858292347,
+        "avg_time_per_batch": 0.027351950490283692,
+        "avg_time_per_sample": 0.0008588512453949078,
+        "params_stats": {
+            "int_weight_params": 2202560,
+            "float_weight_params": 0,
+            "float_bias_params": 17066,
+            "bn_param_params": 0,
+            "other_float_params": 0,
+            "total_params": 2219626,
+            "approx_memory_mb_for_params": 2.1656265258789062
+        }
+    }
+}

@@ -20,17 +20,36 @@ from nnopt.model.const import (
 
 
 # Setup logging
-logging.basicConfig(level=logging.DEBUG, 
+logging.basicConfig(level=logging.INFO, 
                     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
                     handlers=[logging.StreamHandler()])
 
 logger = logging.getLogger(__name__)
-logger.debug(f"Using device: {DEVICE}, dtype: {DTYPE}")
+logger.info(f"Using device: {DEVICE}, dtype: {DTYPE}")
 
 # MobileNetV2 model
+def get_mobilenetv2_model(
+    weights: torchvision.models.MobileNet_V2_Weights | None = torchvision.models.MobileNet_V2_Weights.IMAGENET1K_V1,
+    quantized: bool = False
+    ) -> torch.nn.Module:
+    """
+    Returns the base MobileNetV2 model from torchvision.
+    Args:
+        quantized (bool): Whether to return a quantized version of the model.
+    Returns:
+        torch.nn.Module: The MobileNetV2 model.
+    """
+    logger.info(f"Loading base MobileNetV2 model, quantized: {quantized}")
+    if not quantized:
+        return torchvision.models.mobilenet_v2(weights=torchvision.models.MobileNet_V2_Weights.IMAGENET1K_V1)
+    else:
+        # Load the quantized MobileNetV2
+        return torchvision.models.quantization.mobilenet_v2(weights=torchvision.models.MobileNet_V2_Weights.IMAGENET1K_V1, quantize=False)
+
 def get_mobilenetv2_cifar10_model(
     models_dir_path: str = BASE_MODEL_DIR,
     version: Literal["baseline"] = "baseline",
+    quantized: bool = False
 ) -> tuple[torch.nn.Module, dict[str, Any] | None]:
     """
     Loads the MobileNetV2 model for CIFAR-10 from the specified directory and version.
@@ -42,7 +61,7 @@ def get_mobilenetv2_cifar10_model(
     """
     # Loads the MobileNetV2 model for CIFAR-10, adapting the final layer for 10 classes.
     logger.info(f"Loading MobileNetV2 model for CIFAR-10 from version: {version} at {models_dir_path}")
-    model = torchvision.models.mobilenet_v2(weights=None)
+    model = get_mobilenetv2_model(weights=None, quantized=quantized)
     num_classes_cifar10 = 10
     if hasattr(model, 'classifier') and isinstance(model.classifier, torch.nn.Sequential):
         if hasattr(model.classifier[-1], 'in_features'):
@@ -142,14 +161,14 @@ def get_mobilenetv2_cifar10_transforms(
         torchvision.transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)), # Use ImageNet means/stds
     ])
     
-    val_transform = torchvision.transforms.Compose([
+    eval_transform = torchvision.transforms.Compose([
         torchvision.transforms.Resize(256),
         torchvision.transforms.CenterCrop(224),
         torchvision.transforms.ToTensor(),
         torchvision.transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)), # Use ImageNet means/stds
     ])
     
-    return train_transform, val_transform
+    return train_transform, eval_transform
 
 
 # CIFAR-10 datasets
@@ -163,7 +182,7 @@ def get_cifar10_datasets(
     Returns:
         tuple: A tuple containing the training, validation, and test datasets.
     """
-    image_train_cifar10_mobilenetV2_transform, image_val_cifar10_mobilenetV2_transform = get_mobilenetv2_cifar10_transforms(color_jitter=color_jitter)
+    image_train_cifar10_mobilenetV2_transform, image_eval_cifar10_mobilenetV2_transform = get_mobilenetv2_cifar10_transforms(color_jitter=color_jitter)
 
     if (not os.path.exists(CIFAR10_TEST_PT_FILE) or
         not os.path.exists(CIFAR10_VAL_PT_FILE)):
@@ -178,6 +197,7 @@ def get_cifar10_datasets(
         train_dataset, val_dataset = torch.utils.data.random_split(train_dataset, [45000, 5000], 
                                                                 generator=train_val_split_generator)
         torch.save(train_dataset, CIFAR10_TRAIN_PT_FILE)
+        val_dataset.dataset.transform = image_eval_cifar10_mobilenetV2_transform  # Ensure validation dataset has the correct transform
         torch.save(val_dataset, CIFAR10_VAL_PT_FILE)
     else:
         logger.info("Loading existing training and validation datasets...")
@@ -188,7 +208,7 @@ def get_cifar10_datasets(
         test_dataset = torchvision.datasets.CIFAR10(
             root=CIFAR10_TEST_DIR,
             train=False,
-            transform=image_val_cifar10_mobilenetV2_transform,
+            transform=image_eval_cifar10_mobilenetV2_transform,
             download=True
         )
         torch.save(test_dataset, CIFAR10_TEST_PT_FILE)

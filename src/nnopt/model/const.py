@@ -5,6 +5,7 @@ import torch
 # Setup device
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DTYPE = torch.bfloat16 if DEVICE == "cuda" else torch.float32
+TORCH_BACKENDS_QUANTIZED_ENGINE = "fbgemm" # For x86 use "fbgemm", for ARM use "qnnpack"
 
 # Base directories for datasets and models
 _CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))

@@ -4,6 +4,7 @@ import os
 import time
 
 import torch
+import torch.ao.nn.quantized as nnq
 from torch.optim import Optimizer
 from torch.amp import GradScaler, autocast
 
@@ -60,6 +61,88 @@ def _get_system_stats_msg(device: str) -> str:
             stats_msg += f" | GPU Stats Error: {e}"
     return stats_msg
 
+
+def count_parameters(model: torch.nn.Module) -> dict[str, float]:
+    """
+    Counts parameters in a PyTorch model, distinguishing between
+    INT8 weights, FP32 weights, and various FP32 bias/other parameters.
+    Works for both standard FP32 models and quantized (INT8) models.
+    Args:
+        model (torch.nn.Module): The model to analyze.
+    Returns:
+        dict: A dictionary with counts of different parameter types:
+            - "int_weight_params": Number of INT8 weight parameters
+            - "float_weight_params": Number of FP32 weight parameters
+            - "float_bias_params": Number of FP32 bias parameters
+            - "bn_param_params": Number of FP32 BatchNorm parameters (weight/bias)
+            - "other_float_params": Number of other FP32 parameters
+            - "total_params": Total number of parameters (INT8 + FP32)
+            - "approx_memory_mb_for_params": Approximate memory footprint in MB
+    """
+    int_weight_elements = 0
+    float_weight_elements = 0  # For FP32 weights
+    float_bias_elements = 0    # For biases (typically float)
+    bn_param_elements = 0      # For BatchNorm weight/bias (typically float)
+    other_float_params = 0     # For any other float parameters
+
+    counted_modules = set()
+
+    for name, module in model.named_modules():
+        if module in counted_modules: # Avoid double counting if modules are shared or containers
+            continue
+        counted_modules.add(module)
+
+        # Quantized Layers (nnq.*)
+        if isinstance(module, (nnq.Linear, nnq.Conv2d, nnq.Conv1d, nnq.Conv3d)):
+            # Weight is a quantized tensor
+            q_weight = module.weight()
+            int_weight_elements += q_weight.int_repr().numel()
+            
+            # Bias is typically float for these layers after default PTQ
+            if module.bias() is not None:
+                float_bias_elements += module.bias().numel()
+        
+        # Standard FP32 Layers (nn.*)
+        elif isinstance(module, (torch.nn.Linear, torch.nn.Conv2d, torch.nn.Conv1d, torch.nn.Conv3d)):
+            if hasattr(module, 'weight') and module.weight is not None:
+                float_weight_elements += module.weight.numel()
+            if hasattr(module, 'bias') and module.bias is not None:
+                float_bias_elements += module.bias.numel()
+        
+        # BatchNorm Layers (can be nnq.BatchNorm*d or nn.BatchNorm*d)
+        # Both nnq.BatchNorm*d and nn.BatchNorm*d have FP32 weight and bias Parameters
+        elif isinstance(module, (nnq.BatchNorm2d, nnq.BatchNorm3d, 
+                                 torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d)):
+            if hasattr(module, 'weight') and module.weight is not None:
+                 bn_param_elements += module.weight.numel()
+            if hasattr(module, 'bias') and module.bias is not None:
+                 bn_param_elements += module.bias.numel()
+            # running_mean and running_var are buffers, not parameters.
+            
+        # For other module types that might have parameters (e.g., nn.Embedding)
+        # This ensures we count parameters of modules not explicitly listed above.
+        else:
+            # Check for parameters directly owned by this module, not its children,
+            # as children will be covered by the loop over named_modules().
+            for param_name, param in module.named_parameters(recurse=False):
+                other_float_params += param.numel()
+    
+    total_int_elements = int_weight_elements
+    total_float_elements = float_weight_elements + float_bias_elements + bn_param_elements + other_float_params
+    total_elements = total_int_elements + total_float_elements
+    
+    # Memory footprint: INT8 = 1 byte, Float32 = 4 bytes
+    memory_bytes = (total_int_elements * 1) + (total_float_elements * 4)
+    
+    return {
+        "int_weight_params": int_weight_elements,
+        "float_weight_params": float_weight_elements,
+        "float_bias_params": float_bias_elements,
+        "bn_param_params": bn_param_elements,
+        "other_float_params": other_float_params,
+        "total_params": total_elements,
+        "approx_memory_mb_for_params": memory_bytes / (1024**2)
+    }
 
 # Helper function to run one pass (train, validation, or evaluation)
 def _run_one_pass(

@@ -6,7 +6,7 @@ from torch.amp import autocast
 
 import logging
 from tqdm import tqdm
-from nnopt.model.utils import _run_one_pass, _get_system_stats_msg
+from nnopt.model.utils import _run_one_pass, _get_system_stats_msg, count_parameters
 
 
 # Setup logging
@@ -112,6 +112,5 @@ def eval_model(
         "samples_per_second": samples_per_second,
         "avg_time_per_batch": avg_time_per_batch,
         "avg_time_per_sample": avg_time_per_sample,
-        "n_params": sum(p.numel() for p in model.parameters() if p.requires_grad),
-        "n_nonzero_params": sum(p.nonzero().shape[0] for p in model.parameters() if p.requires_grad),
+        "params_stats": count_parameters(model),
     }
