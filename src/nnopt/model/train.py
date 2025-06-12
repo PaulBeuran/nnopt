@@ -160,7 +160,6 @@ def train_model(
 
 def adapt_model_head_to_dataset(
     model: torch.nn.Module, 
-    num_classes: int, 
     train_dataset: torch.utils.data.Dataset, 
     val_dataset: torch.utils.data.Dataset,
     batch_size: int = 32,
@@ -196,31 +195,6 @@ def adapt_model_head_to_dataset(
         use_amp (bool): Whether to use automatic mixed precision.
         dtype (torch.dtype): Data type for mixed precision.
     """
-
-    # Replace the final layer
-    if hasattr(model, "fc"):
-        model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
-    elif hasattr(model, "classifier") and isinstance(model.classifier, torch.nn.Sequential):
-        # Common case for models like MobileNetV2, EfficientNet
-        if hasattr(model.classifier[-1], "in_features"):
-            model.classifier[-1] = torch.nn.Linear(model.classifier[-1].in_features, num_classes)
-        else:
-            # Fallback for other structures if needed, this might require specific handling
-            logger.warning(f"Warning: Classifier final layer replacement might be inexact.")
-            # Attempt to find the last linear layer if possible, or raise error
-            for i in range(len(model.classifier) -1, -1, -1):
-                if isinstance(model.classifier[i], torch.nn.Linear):
-                    model.classifier[i] = torch.nn.Linear(model.classifier[i].in_features, num_classes)
-                    break
-            else:
-                raise AttributeError(f"Could not find a final Linear layer in classifier")
-
-    elif hasattr(model, "classifier") and isinstance(model.classifier, torch.nn.Linear): # e.g. some ViT models
-        model.classifier = torch.nn.Linear(model.classifier.in_features, num_classes)
-    else:
-        raise AttributeError(f"""Model does not have "fc" or a known "classifier" structure to replace.""")
-
-
     model.to(device)
 
     # DataLoaders
