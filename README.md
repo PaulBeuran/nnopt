@@ -1,6 +1,9 @@
 # nnopt
 A demo for optimizing neural network inference throughoutput and storage to use on embedded device.
 
+![Accuracy vs Model Size](images/acc_vs_model_size.png)
+![Accuracy vs Time per Sample](images/acc_vs_time_per_sample.png)
+
 ## Project Summary
 
 The objective of this project is to showcase the optimization of neural network inference by reducing the output, storage and computational requirements for deployment on embedded devices. The project includes a demo that utilizes two pretrained models, specifically designed for image and audio processing tasks, and demonstrates how to optimize their performance for embedded systems.
