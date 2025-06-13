@@ -102,8 +102,8 @@ def eval_model(
 
     # Log throughput and system stats
     throughput_msg = (f"Throughput: {samples_per_second:.2f} samples/sec | "
-                      f"Avg Batch Time: {avg_time_per_batch*1000:.2f} ms | "
-                      f"Avg Sample Time: {avg_time_per_sample*1000:.2f} ms")
+                      f"Avg Batch Time: {avg_time_per_batch:.2f} ms | "  # Already in ms from _run_one_pass
+                      f"Avg Sample Time: {avg_time_per_sample:.2f} ms") # Already in ms from _run_one_pass
     stats_msg = _get_system_stats_msg(device)
     
     tqdm.write(f"Evaluation Complete: Avg Loss: {avg_eval_loss:.4f}, Accuracy: {eval_accuracy:.4f}")
@@ -210,8 +210,8 @@ def eval_onnx_model(
         ort_outputs = ort_session.run([output_name], ort_inputs)
         preds_numpy = ort_outputs[0] # Output is a list of numpy arrays
 
-        batch_inference_time = time.perf_counter() - batch_start_time
-        total_inference_time += batch_inference_time
+        batch_inference_time = (time.perf_counter() - batch_start_time) * 1000.0 # Convert to ms
+        total_inference_time += batch_inference_time # Accumulates ms
         total_processed_samples_for_throughput += inputs.size(0)
 
         # Convert predictions to PyTorch tensor for metrics calculation
@@ -232,14 +232,15 @@ def eval_onnx_model(
     avg_eval_loss = total_loss / total_samples if total_samples > 0 else 0
     eval_accuracy = correct_predictions / total_samples if total_samples > 0 else 0
     
-    samples_per_second = total_processed_samples_for_throughput / total_inference_time if total_inference_time > 0 else 0
-    avg_time_per_batch = total_inference_time / len(test_loader) if len(test_loader) > 0 else 0
-    avg_time_per_sample = total_inference_time / total_processed_samples_for_throughput if total_processed_samples_for_throughput > 0 else 0
+    # total_inference_time is in ms
+    samples_per_second = (total_processed_samples_for_throughput * 1000.0) / total_inference_time if total_inference_time > 0 else 0.0
+    avg_time_per_batch = total_inference_time / len(test_loader) if len(test_loader) > 0 else 0.0 # in ms
+    avg_time_per_sample = total_inference_time / total_processed_samples_for_throughput if total_processed_samples_for_throughput > 0 else 0.0 # in ms
     
     # Log throughput and system stats
     throughput_msg = (f"Throughput: {samples_per_second:.2f} samples/sec | "
-                      f"Avg Batch Time: {avg_time_per_batch*1000:.2f} ms | "
-                      f"Avg Sample Time: {avg_time_per_sample*1000:.2f} ms")
+                      f"Avg Batch Time: {avg_time_per_batch:.2f} ms | " # Already in ms
+                      f"Avg Sample Time: {avg_time_per_sample:.2f} ms") # Already in ms
     stats_msg = _get_system_stats_msg(device) # System stats for the PyTorch part
 
     tqdm.write(f"ONNX Evaluation Complete: Avg Loss: {avg_eval_loss:.4f}, Accuracy: {eval_accuracy:.4f}")
@@ -309,10 +310,10 @@ def eval_model_openvino(
 
         start = time.perf_counter()
         out = compiled([np_in])[0]               # (batch, num_classes)
-        elapsed = time.perf_counter() - start
+        elapsed = (time.perf_counter() - start) * 1000.0 # Convert to ms
 
         # bookkeeping
-        total_inference_time += elapsed
+        total_inference_time += elapsed # Accumulates ms
         total_processed += bs
 
         preds = torch.from_numpy(out)            # CPU tensor
@@ -324,14 +325,15 @@ def eval_model_openvino(
     # Compute metrics
     avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
     accuracy = correct_predictions / total_samples if total_samples > 0 else 0.0
-    samples_per_second = total_processed / total_inference_time if total_inference_time > 0 else 0.0
-    avg_time_per_batch = total_inference_time / len(loader) if len(loader) > 0 else 0.0
-    avg_time_per_sample = total_inference_time / total_processed if total_processed > 0 else 0.0
+    # total_inference_time is in ms
+    samples_per_second = (total_processed * 1000.0) / total_inference_time if total_inference_time > 0 else 0.0
+    avg_time_per_batch = total_inference_time / len(loader) if len(loader) > 0 else 0.0 # in ms
+    avg_time_per_sample = total_inference_time / total_processed if total_processed > 0 else 0.0 # in ms
 
     throughput_msg = (
         f"Throughput: {samples_per_second:.2f} samples/sec | "
-        f"Avg Batch Time: {avg_time_per_batch*1000:.2f} ms | "
-        f"Avg Sample Time: {avg_time_per_sample*1000:.2f} ms"
+        f"Avg Batch Time: {avg_time_per_batch:.2f} ms | " # Already in ms
+        f"Avg Sample Time: {avg_time_per_sample:.2f} ms"  # Already in ms
     )
     stats_msg = _get_system_stats_msg("cpu")
 

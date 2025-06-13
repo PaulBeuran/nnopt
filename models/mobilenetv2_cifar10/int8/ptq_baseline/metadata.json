@@ -1,18 +1,34 @@
 {
     "metrics_values": {
-        "accuracy": 0.8994,
-        "avg_loss": 0.28536900372505186,
-        "samples_per_second": 737.7547966796328,
-        "avg_time_per_batch": 0.04316764038850605,
-        "avg_time_per_sample": 0.0013554639081990898,
-        "params_stats": {
-            "int_weight_params": 2202560,
-            "float_weight_params": 0,
-            "float_bias_params": 17066,
-            "bn_param_params": 0,
-            "other_float_params": 0,
-            "total_params": 2219626,
-            "approx_memory_mb_for_params": 2.1656265258789062
+        "val_metrics": {
+            "accuracy": 0.893,
+            "avg_loss": 0.3198510060787201,
+            "samples_per_second": 1185.4058736877437,
+            "avg_time_per_batch": 26.866016496853355,
+            "avg_time_per_sample": 0.8435929180011954,
+            "params_stats": {
+                "int_weight_params": 2202560,
+                "float_weight_params": 0,
+                "float_bias_params": 17066,
+                "bn_param_params": 0,
+                "other_float_params": 0,
+                "total_params": 2219626
+            }
+        },
+        "test_metrics": {
+            "accuracy": 0.8943,
+            "avg_loss": 0.3138435321688652,
+            "samples_per_second": 1122.630142460974,
+            "avg_time_per_batch": 28.458955964874267,
+            "avg_time_per_sample": 0.8907653217005645,
+            "params_stats": {
+                "int_weight_params": 2202560,
+                "float_weight_params": 0,
+                "float_bias_params": 17066,
+                "bn_param_params": 0,
+                "other_float_params": 0,
+                "total_params": 2219626
+            }
         }
     }
 }

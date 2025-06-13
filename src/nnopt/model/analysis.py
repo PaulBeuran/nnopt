@@ -10,7 +10,7 @@ def plot_model_performance_scatter(
     test_accuracies: List[float],
     cpu_time_per_sample_test: List[float],
     total_params_mb_test: List[float],
-    model_styles: Optional[List[Optional[Dict[str, str]]]] = None, # Allow None for individual styles
+    model_styles: Optional[List[Optional[Dict[str, str]]]] = None, # Allow None for individual styles,
     output_dir: str = None
 ) -> None:
     """
