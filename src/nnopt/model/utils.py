@@ -141,7 +141,6 @@ def count_parameters(model: torch.nn.Module) -> dict[str, float]:
         "bn_param_params": bn_param_elements,
         "other_float_params": other_float_params,
         "total_params": total_elements,
-        "approx_memory_mb_for_params": memory_bytes / (1024**2)
     }
 
 # Helper function to run one pass (train, validation, or evaluation)
@@ -223,11 +222,11 @@ def _run_one_pass(
                     loss.backward()
                     optimizer.step()
             
-            current_batch_duration = 0.0
+            current_batch_duration = 0.0 # Will store milliseconds
             if enable_timing:
                 if device == "cuda": torch.cuda.synchronize()
                 batch_end_time = time.perf_counter()
-                current_batch_duration = batch_end_time - batch_start_time
+                current_batch_duration = (batch_end_time - batch_start_time) * 1000.0 # Convert to milliseconds
                 batch_times.append(current_batch_duration)
 
             total_loss += loss.item() * inputs.size(0) 
@@ -240,10 +239,11 @@ def _run_one_pass(
             current_acc = correct_preds / total_samples_processed if total_samples_processed > 0 else 0
             postfix_stats["acc"] = f"{current_acc:.4f}"
 
-            if enable_timing and current_batch_duration > 0:
+            if enable_timing and current_batch_duration > 0: # current_batch_duration is in ms
                 samples_this_batch = inputs.size(0)
-                batch_throughput = samples_this_batch / current_batch_duration
-                postfix_stats["samples/s"] = f"{batch_throughput:.1f}" # samples per second
+                # Calculate samples per second for the postfix: (samples / (ms / 1000)) = (samples * 1000) / ms
+                batch_sps = (samples_this_batch * 1000.0) / current_batch_duration
+                postfix_stats["samples/s"] = f"{batch_sps:.1f}" # samples per second
             
             # System stats
             postfix_stats["cpu"] = f"{psutil.cpu_percent():.1f}%"
@@ -275,14 +275,20 @@ def _run_one_pass(
     results = {"avg_loss": avg_loss, "accuracy": accuracy, "total_samples_processed": float(total_samples_processed)}
     
     if enable_timing and batch_times: 
-        total_inference_time = sum(batch_times)
+        total_inference_time = sum(batch_times) # Sum of batch_times, now in milliseconds
         num_timed_batches = len(batch_times)
-        results["total_inference_time"] = total_inference_time
+        results["total_inference_time"] = total_inference_time # Value is in ms
         results["num_timed_batches"] = float(num_timed_batches)
         
-        results["avg_time_per_batch"] = total_inference_time / num_timed_batches if num_timed_batches > 0 else 0
-        results["avg_time_per_sample"] = total_inference_time / total_samples_processed if total_samples_processed > 0 else 0
-        results["samples_per_second"] = total_samples_processed / total_inference_time if total_inference_time > 0 else 0
+        results["avg_time_per_batch"] = total_inference_time / num_timed_batches if num_timed_batches > 0 else 0.0 # Value is in ms
+        results["avg_time_per_sample"] = total_inference_time / total_samples_processed if total_samples_processed > 0 else 0.0 # Value is in ms
+        
+        # Calculate samples_per_second using total_inference_time in ms
+        # samples_per_second = total_samples_processed / (total_inference_time_ms / 1000.0)
+        if total_inference_time > 0:
+            results["samples_per_second"] = (total_samples_processed * 1000.0) / total_inference_time
+        else:
+            results["samples_per_second"] = 0.0
     else: 
         results["total_inference_time"] = 0.0
         results["num_timed_batches"] = 0.0
