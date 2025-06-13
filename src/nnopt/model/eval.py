@@ -5,8 +5,8 @@ import torch
 from torch.amp import autocast
 
 import time
-import numpy as np
 import onnxruntime as ort
+from openvino.runtime import Core
 
 import logging
 from tqdm import tqdm
@@ -254,4 +254,95 @@ def eval_onnx_model(
         "avg_time_per_sample": avg_time_per_sample,
         # Note: Parameter count like in PyTorch models is not directly applicable/easy for ONNX.
         # File size of the ONNX model could be a proxy for model size.
+    }
+
+
+def eval_model_openvino(
+    onnx_model_path: str,
+    test_dataset: torch.utils.data.Dataset,
+    batch_size: int = 32,
+    criterion: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = torch.nn.CrossEntropyLoss(),
+    sparse_rate: float = 0.5,
+    num_warmup_batches: int = 5,
+    num_workers: int = 4,
+    pin_memory: bool = True
+) -> dict[str, float]:
+    """
+    Evaluate an ONNX model via OpenVINO with sparse‐weight decompression enabled.
+    Returns accuracy, avg_loss, throughput & timing stats.
+    """
+    # 1. Compile ONNX model with sparse acceleration
+    ie = Core()
+    ov_model = ie.read_model(onnx_model_path)
+    compiled = ie.compile_model(
+        model=ov_model,
+        device_name="CPU",
+        config={"CPU_SPARSE_WEIGHTS_DECOMPRESSION_RATE": str(sparse_rate)}
+    )
+
+    # 2. Create DataLoader
+    loader = torch.utils.data.DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory
+    )
+
+    # 3. Warmup
+    if num_warmup_batches > 0 and len(loader) > num_warmup_batches:
+        for inputs, _ in islice(loader, num_warmup_batches):
+            np_in = inputs.cpu().numpy()
+            _ = compiled([np_in])
+
+    # 4. Evaluation pass
+    total_loss = 0.0
+    correct_predictions = 0
+    total_samples = 0
+    total_inference_time = 0.0
+    total_processed = 0
+
+    tqdm.write(f"Starting OpenVINO evaluation for: {onnx_model_path}")
+    for inputs, labels in tqdm(loader, desc="[OpenVINO Evaluation]"):
+        bs = inputs.size(0)
+        np_in = inputs.cpu().numpy()
+
+        start = time.perf_counter()
+        out = compiled([np_in])[0]               # (batch, num_classes)
+        elapsed = time.perf_counter() - start
+
+        # bookkeeping
+        total_inference_time += elapsed
+        total_processed += bs
+
+        preds = torch.from_numpy(out)            # CPU tensor
+        loss = criterion(preds, labels)
+        total_loss += loss.item() * bs
+        correct_predictions += (preds.argmax(dim=1) == labels).sum().item()
+        total_samples += bs
+
+    # Compute metrics
+    avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
+    accuracy = correct_predictions / total_samples if total_samples > 0 else 0.0
+    samples_per_second = total_processed / total_inference_time if total_inference_time > 0 else 0.0
+    avg_time_per_batch = total_inference_time / len(loader) if len(loader) > 0 else 0.0
+    avg_time_per_sample = total_inference_time / total_processed if total_processed > 0 else 0.0
+
+    throughput_msg = (
+        f"Throughput: {samples_per_second:.2f} samples/sec | "
+        f"Avg Batch Time: {avg_time_per_batch*1000:.2f} ms | "
+        f"Avg Sample Time: {avg_time_per_sample*1000:.2f} ms"
+    )
+    stats_msg = _get_system_stats_msg("cpu")
+
+    tqdm.write(f"OpenVINO Evaluation Complete: Avg Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}")
+    tqdm.write(throughput_msg)
+    tqdm.write(f"System Stats: {stats_msg}")
+
+    return {
+        "accuracy": accuracy,
+        "avg_loss": avg_loss,
+        "samples_per_second": samples_per_second,
+        "avg_time_per_batch": avg_time_per_batch,
+        "avg_time_per_sample": avg_time_per_sample,
     }

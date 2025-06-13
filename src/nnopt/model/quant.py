@@ -69,7 +69,7 @@ def post_training_quantization(
     # Calibrate using the prepared model.
     logger.info(f"Starting calibration with {num_calibration_batches} batches...")
     with torch.no_grad():
-        model.to("cpu")
+        model.to(DEVICE)
         data_loader = torch.utils.data.DataLoader(
             val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True
         )
@@ -77,12 +77,13 @@ def post_training_quantization(
         for i, (inputs, _) in tqdm(enumerate(data_loader), total=actual_calib_batches):
             if i >= actual_calib_batches:
                 break
-            model(inputs.to("cpu")) # Pass inputs to the model for calibration
+            model(inputs.to(DEVICE)) # Pass inputs to the model for calibration
     logger.info(f"Calibration completed over {actual_calib_batches} batches.")
 
     # Convert the prepared model. Using inplace=True.
     logger.info("Converting model to quantized version...")
     # Model is already on CPU and in eval mode
+    model.cpu()  # Ensure model is on CPU for conversion
     torch.quantization.convert(model, inplace=True)
     model.eval() # Ensure it's still in eval mode after convert
     logger.info("Model quantization completed.")

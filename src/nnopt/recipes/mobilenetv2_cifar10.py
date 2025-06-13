@@ -7,7 +7,7 @@ import json
 import torch
 import torchvision
 
-from nnopt.model.prune import l1_unstructured_pruning
+from nnopt.model.prune import l1_unstructured_pruning, remove_pruning_reparameterization
 
 import logging
 
@@ -133,6 +133,10 @@ def save_mobilenetv2_cifar10_model(
     else:
         logger.info("No metadata to save (metadata dictionary is empty).")
 
+    # Remove the reparameterization for unstructured sparsity if it exists
+    model = remove_pruning_reparameterization(model)
+
+    # Save the model in JIT format if requested
     if save_jit:
         logger.info("Saving model in JIT script format...")
         model_script = torch.jit.script(model)
@@ -146,11 +150,28 @@ def save_mobilenetv2_cifar10_model(
         logger.info(f"JIT model saved to {model_trace_path}")
 
 
+def convert_mobilenetv2_cifar10_to_quantized(
+    model: torch.nn.Module,
+) -> torch.nn.Module:
+    quant_model = init_mobilenetv2_cifar10_model(
+        weights=None,      # No pretrained torchvision weights, we're loading our custom QAT model
+        to_quantize=True,    # We want a quantized model architecture
+        is_quantized=False, # This ensures 'quantize=True' is passed to torchvision's quantized constructor
+        num_classes=10    # CIFAR-10 has 10 classes
+    )
+    # Change the head of the quantized model to match CIFAR-10 classes
+    quant_model.load_state_dict(model.state_dict())
+    quant_model.cpu()
+    return quant_model
+
+
 def load_mobilenetv2_cifar10_model(
     version: str,
     models_dir_path: str = BASE_MODEL_DIR,
     device: Literal["cpu", "cuda"] = DEVICE,
-    mode: Literal["model", "state_dict", "state_load", "quant_state_load", "jit_script", "jit_trace"] = "model"
+    mode: Literal["model", "state_dict", "state_load", "quant_state_load", "jit_script", "jit_trace"] = "model",
+    convert_to_quantized: bool = False,
+    restore_unstruct_prune_reparam: bool = False
 ) -> tuple[torch.nn.Module | OrderedDict | torch.jit.ScriptModule, dict[str, Any] | None]:
     """
     Loads the MobileNetV2 model for CIFAR-10 from the specified directory and version.
@@ -206,7 +227,8 @@ def load_mobilenetv2_cifar10_model(
             raise FileNotFoundError(f"State dictionary file not found at {state_dict_path}. Please ensure the model is saved correctly or the path and version are correct.")
         else:
             logger.info(f"Loading state_dict from {state_dict_path}")
-            state_dict = torch.load(state_dict_path, map_location=device, weights_only=True)
+            map_location = device if mode != "quant_state_load" else "cpu"  # Use CPU for quantized state load
+            state_dict = torch.load(state_dict_path, map_location=map_location, weights_only=True)
             model: torch.nn.Module = init_mobilenetv2_cifar10_model(
                 weights=None,  # No pretrained weights, we're loading our custom model
                 to_quantize=(mode == "quant_state_load"),  # If mode is 'quant_state_load', we want a quantized model architecture
@@ -234,29 +256,20 @@ def load_mobilenetv2_cifar10_model(
             model: torch.jit.ScriptModule = torch.jit.load(jit_trace_path, map_location=device)
             logger.info(f"Successfully loaded JIT traced model from {jit_trace_path}")
 
+    # If the model is not quantized, we need to convert it to a quantized model if requested
+    if convert_to_quantized and not mode == "quant_state_load":
+        logger.info("Converting model to quantized version...")
+        model = convert_mobilenetv2_cifar10_to_quantized(model)
+        logger.info("Model converted to quantized version.")
+
     # If unstructured sparse config is present, apply it to reparametrize the model for further finetuning without touching to the pruned weights. This works because as pruned weights are already set to 0, pruning again with the same config will only prune the already pruned model weights.
-    if "unstructured_sparse_config" in metadata:
+    if "unstructured_sparse_config" in metadata and restore_unstruct_prune_reparam:
         unstruct_sparse_config = metadata["unstructured_sparse_config"]
         if unstruct_sparse_config:
             logger.info(f"Applying unstructured sparse config: {unstruct_sparse_config}")
             model = l1_unstructured_pruning(model, **unstruct_sparse_config)
 
     return model, metadata
-
-
-def convert_mobilenetv2_cifar10_to_quantized(
-    model: torch.nn.Module,
-) -> torch.nn.Module:
-    quant_model = init_mobilenetv2_cifar10_model(
-        weights=None,      # No pretrained torchvision weights, we're loading our custom QAT model
-        to_quantize=True,    # We want a quantized model architecture
-        is_quantized=False, # This ensures 'quantize=True' is passed to torchvision's quantized constructor
-        num_classes=10    # CIFAR-10 has 10 classes
-    )
-    # Change the head of the quantized model to match CIFAR-10 classes
-    quant_model.load_state_dict(model.state_dict())
-    quant_model.cpu()
-    return quant_model
 
 
 # CIFAR-10 dataset transforms for MobileNetV2
